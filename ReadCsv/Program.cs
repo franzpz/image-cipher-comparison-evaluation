@@ -18,6 +18,7 @@ namespace ReadCsv
         private const int RoundThreshold = 15;
         private const double IdleRangeStart = 0.1;
         private const double IdleRangeEnd = 0.15;
+        private const double voltage = 3.9;
 
         static void Main(string[] args)
         {
@@ -87,6 +88,35 @@ namespace ReadCsv
                 csv.WriteField(trace.Standardabweichung);
                 csv.NextRecord();
 
+                csv.WriteField("Average Watt");
+                csv.WriteField(trace.MittelwertWatt);
+                csv.NextRecord();
+
+                csv.WriteField("Standardabweichung Watt");
+                csv.WriteField(trace.StandardabweichungWattbefore);
+                csv.NextRecord();
+
+                csv.WriteField("Hours");
+                csv.WriteField(trace.Hours);
+                csv.NextRecord();
+
+                csv.WriteField("Watt Hours");
+                csv.WriteField(trace.Watthours);
+                csv.NextRecord();
+
+                csv.WriteField("Within Sigma 1 in %");
+                csv.WriteField(trace.PercentageOfValuesWithin1Sigma);
+                csv.NextRecord();
+
+                csv.WriteField("Within Sigma 2 in %");
+                csv.WriteField(trace.PercentageOfValuesWithin2Sigma);
+                csv.NextRecord();
+
+                csv.WriteField("Within Sigma 3 in %");
+                csv.WriteField(trace.PercentageOfValuesWithin3Sigma);
+                csv.NextRecord();
+
+
                 for (int i = 0; i < trace.Rounds.Count; i++)
                 {
                     var round = trace.Rounds[i];
@@ -115,6 +145,34 @@ namespace ReadCsv
                     csv.WriteField(round.Standardabweichung);
                     csv.NextRecord();
 
+                    csv.WriteField("Average Watt");
+                    csv.WriteField(trace.MittelwertWatt);
+                    csv.NextRecord();
+
+                    csv.WriteField("Standardabweichung Watt");
+                    csv.WriteField(trace.StandardabweichungWattbefore);
+                    csv.NextRecord();
+
+                    csv.WriteField("Hours");
+                    csv.WriteField(trace.Hours);
+                    csv.NextRecord();
+
+                    csv.WriteField("Watt Hours");
+                    csv.WriteField(trace.Watthours);
+                    csv.NextRecord();
+
+                    csv.WriteField("Within Sigma 1 in %");
+                    csv.WriteField(trace.PercentageOfValuesWithin1Sigma);
+                    csv.NextRecord();
+
+                    csv.WriteField("Within Sigma 2 in %");
+                    csv.WriteField(trace.PercentageOfValuesWithin2Sigma);
+                    csv.NextRecord();
+
+                    csv.WriteField("Within Sigma 3 in %");
+                    csv.WriteField(trace.PercentageOfValuesWithin3Sigma);
+                    csv.NextRecord();
+
                     csv.NextRecord();
                 }
 
@@ -140,18 +198,32 @@ namespace ReadCsv
 
                 csv.Read();
                 trace.Start = csv.GetField<DateTime>(1);
-                csv.Read();
-                trace.End = csv.GetField<DateTime>(1);
+                try
+                {
+                    csv.Read();
+                    trace.End = csv.GetField<DateTime>(1);
+                }
+                catch (Exception)
+                {
+                    trace.End = DateTime.MaxValue;
+                }
 
-                for (int i = 0; i < 7; i++)
+                while (!csv.GetField<string>(0).StartsWith("Time"))
                     csv.Read();
 
                 while (csv.Read())
                 {
+                    var value = csv.GetField<string>(1);
+                    double dValue;
+                    if (value.Contains(","))
+                        dValue = double.Parse(value);
+                    else
+                        dValue = double.Parse(value, CultureInfo);
+
                     trace.Samples.Add(new Sample()
                     {
                         Timestamp = csv.GetField<DateTime>(0),
-                        Value = double.Parse(csv.GetField<string>(1), CultureInfo)
+                        Value = dValue
                     });
                 }
             }
@@ -161,34 +233,15 @@ namespace ReadCsv
             if (isIdle)
             {
                 var samples = trace.Samples.Select(x => x.Value).ToList();
-                trace.Count = samples.Count;
-                trace.Mittelwert = samples.Average();
-                trace.Min = samples.Min();
-                trace.Max = samples.Max();
-                trace.Standardabweichung = samples
-                    .Select(s =>
-                    {
-                        var minusMittel = s - trace.Mittelwert;
-                        return (double)Math.Sqrt((double)(minusMittel * minusMittel));
-                    })
-                    .Average();
+
+                trace = (BenchVueTrace) CalculateResults(samples, trace);
             }
             else
             {
                 trace.Rounds = FindRoundsInSamples(trace);
 
-                var values = trace.Rounds;
-                trace.Count = values.Count;
-                trace.Mittelwert = values.Select(s => s.Mittelwert).Average();
-                trace.Min = values.Select(s => s.Mittelwert).Min();
-                trace.Max = values.Select(s => s.Mittelwert).Max();
-                trace.Standardabweichung = values.Select(s => s.Mittelwert)
-                    .Select(s =>
-                    {
-                        var minusMittel = s - trace.Mittelwert;
-                        return (double)Math.Sqrt((double)(minusMittel * minusMittel));
-                    })
-                    .Average();
+                var samples = trace.Rounds.Select(x => x.Mittelwert).ToList();
+                trace = (BenchVueTrace) CalculateResults(samples, trace);
             }
 
             return trace;
@@ -275,20 +328,71 @@ namespace ReadCsv
                             break;
                     }
 
-                    x.Count = x.Samples.Count;
-                    x.Mittelwert = x.Samples.Select(s => s.Value).Average();
-                    x.Min = x.Samples.Select(s => s.Value).Min();
-                    x.Max = x.Samples.Select(s => s.Value).Max();
-                    x.Standardabweichung = x.Samples.Select(s => s.Value)
-                        .Select(s =>
-                        {
-                            var minusMittel = s - x.Mittelwert;
-                            return (double)Math.Sqrt((double)(minusMittel * minusMittel));
-                        })
-                        .Average();
+                    var byTimestamp = x.Samples.OrderBy(s => s.Timestamp).ToArray();
+                    x.Start = byTimestamp.First().Timestamp;
+                    x.End = byTimestamp.Last().Timestamp;
+
+                    x = CalculateResults(x.Samples.Select(s => s.Value).ToList(), x);
                 });
 
             return rounds;
+        }
+
+        public static Round CalculateResults(List<double> samples, Round trace = null)
+        {
+            var wattSamples = samples.Select(x => x * voltage).ToList();
+
+            trace = trace ?? new BenchVueTrace();
+            trace.Count = samples.Count;
+            trace.Mittelwert = samples.Average();
+            trace.MittelwertWatt = wattSamples.Average();
+            trace.Min = samples.Min();
+            trace.Max = samples.Max();
+
+            trace.Standardabweichung = (double)Math.Sqrt(samples
+                .Select(s =>
+                {
+                    var minusMittel = s - trace.Mittelwert;
+                    return (double)(minusMittel * minusMittel);
+                })
+                .Average()
+            );
+
+            trace.StandardabweichungWattbefore = (double)Math.Sqrt(wattSamples
+                .Select(s =>
+                {
+                    var minusMittel = s - trace.MittelwertWatt;
+                    return (double)(minusMittel * minusMittel);
+                })
+                .Average()
+            );
+
+            trace.StandardabweichungWattafter = trace.Standardabweichung * voltage;
+
+            if (trace.End != DateTime.MaxValue)
+            {
+                var hours = (trace.End - trace.Start).TotalHours;
+                trace.Hours = hours;
+                trace.Watthours = hours * trace.MittelwertWatt;
+            }
+
+            trace.PercentageOfValuesWithin1Sigma = CalcWithin(wattSamples, 1, trace);
+            trace.PercentageOfValuesWithin2Sigma = CalcWithin(wattSamples, 2, trace);
+            trace.PercentageOfValuesWithin3Sigma = CalcWithin(wattSamples, 3, trace);
+            /*
+             * count = samples
+             */
+
+            return trace;
+        }
+
+        public static double CalcWithin(List<double> wattSamples, int sigma, Round r)
+        {
+            var min = (r.MittelwertWatt - ((double)sigma) * r.StandardabweichungWattbefore);
+            var max = (r.MittelwertWatt + ((double)sigma) * r.StandardabweichungWattbefore);
+            var countValuesWithin =
+                wattSamples.Count(x => x >= min && x <= max);
+            return ((double)countValuesWithin) / ((double)r.Count) * 100.0;
         }
 
         private static bool IsCipherSample(Sample currSample)
@@ -391,11 +495,24 @@ namespace ReadCsv
         public int Index { get; set; }
         public List<Sample> Samples { get; set; } = new List<Sample>();
 
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+
         public long Count;
         public double Mittelwert;
         public double Min;
         public double Max;
         public double Standardabweichung;
+
+        public double MittelwertWatt { get; set; }
+        public double StandardabweichungWattbefore { get; set; }
+        public double StandardabweichungWattafter { get; set; }
+        public double Hours { get; set; }
+        public double Watthours { get; set; }
+
+        public double PercentageOfValuesWithin1Sigma = 0;
+        public double PercentageOfValuesWithin2Sigma = 0;
+        public double PercentageOfValuesWithin3Sigma = 0;
 
         public override string ToString()
         {
@@ -410,21 +527,13 @@ Standardabweichung: {Standardabweichung}
         }
     }
 
-    public class BenchVueTrace
+    public class BenchVueTrace : Round
     {
-        public DateTime Start { get; set; }
-        public DateTime End { get; set; }
         public string File { get; set; }
 
         public List<Sample> Samples = new List<Sample>();
 
         public List<Round> Rounds { get; set; } = new List<Round>();
-
-        public long Count;
-        public double Mittelwert;
-        public double Min;
-        public double Max;
-        public double Standardabweichung;
 
         public override string ToString()
         {
